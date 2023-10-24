@@ -1,7 +1,7 @@
 name: Generic.Scanner.Thor
 description: |
-   Generic artifact for THOR forensic scanner (https://www.nextron-systems.com/thor/) running on Windows, Linux and Darwin systems.
-   This artifact will create and download valid licenses for each host on the fly using the "PortalKey" parameter, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#retrieve-valid-license-from-customer-portal .
+   Generic artifact for THOR (enterprise) forensic scanner (https://www.nextron-systems.com/thor/) running on Windows, Linux and Darwin systems.
+   This artifact will create and download valid licenses for each host on the fly using the "PortalKey" parameter, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#retrieve-valid-license-from-customer-portal . 
 
    Reports (.html & .txt) are uploaded to Velociraptor server, THOR stdout output can be found in the flow details "Results" tab.
 
