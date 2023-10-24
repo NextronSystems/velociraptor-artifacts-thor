@@ -1,0 +1,46 @@
+name: Generic.Scanner.ThorCloud
+description: |
+   Generic artifact for THOR CLOUD forensic scanner (https://www.nextron-systems.com/thor-cloud/) running on Windows, Linux and Darwin systems.
+
+   This artifact needs a THOR Cloud launcher token, which can be copied from the 'Launcher' options ('token') from within the campaign view.
+
+author: Paul Hager - @pH_T__ (Nextron Systems)
+
+type: CLIENT
+
+precondition: SELECT OS FROM info() where OS = 'windows' or OS = "linux" or OS = "darwin"
+
+parameters:
+  - name: Token
+    description: THOR Cloud launcher token
+    default: "."
+
+sources:
+    - query: |
+        LET Type <= SELECT t FROM switch (
+            a={
+                SELECT 'windows-binary' as t FROM info() WHERE OS = "windows"
+            },
+            b={
+                SELECT 'linux-script' as t FROM info() WHERE OS = "linux"
+            },
+            c={
+                SELECT 'mac-script' as t FROM info() WHERE OS = "darwin"
+            }
+        )
+
+        LET ThorZIP <= SELECT Content FROM http_client(
+              url='https://thorcloud-lite.nextron-systems.com/dl',
+              method='GET',
+              params=dict(
+                  `origin` = "oneliner",
+                  `type` = (Type[0]).t,
+                  `token` = Token
+              ),
+              tempfile_extension=".exe"
+        )
+        LET Chmod <= SELECT * FROM if(condition={SELECT OS FROM info() WHERE NOT OS =~ "windows" },
+                                    then={SELECT * FROM execve(argv=["chmod", "+x", ThorZIP.Content[0]])}
+                                )
+        LET Exec <= SELECT * FROM execve(argv=[ThorZIP.Content])
+        SELECT * FROM foreach(row=Exec)

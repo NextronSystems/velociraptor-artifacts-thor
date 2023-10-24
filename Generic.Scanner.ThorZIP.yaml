@@ -1,0 +1,48 @@
+name: Generic.Scanner.ThorZIP
+description: |
+   Generic artifact for THOR (LITE) forensic scanner (https://www.nextron-systems.com/thor/) running on Windows, Linux and Darwin systems.
+   
+   Mostly made for THOR LITE, for THOR enterprise see Generic.Scanner.Thor.
+   
+   This arifact expects a ZIP with THOR (LITE) binaries, licenses and signatures via the "tools" config 'ThorZIP'.
+   ZIP file is downloaded to client host, unzipped and based on OS and architecture the right files are executed.
+   Reports (.html & .txt) are uploaded to Velociraptor server, THOR stdout output can be found in the flow details "Results" tab.
+
+
+author: Paul Hager - @pH_T__ (Nextron Systems)
+
+type: CLIENT
+
+precondition: SELECT OS FROM info() where OS = 'windows' or OS = "linux" or OS = "darwin"
+
+tools:
+  - name: ThorZIP
+    url: todo.thor-lite.zip.download.url
+
+parameters:
+  - name: CMDLine
+    description: Thor command line flags. In most cases leaving empty is fine, see https://thor-manual.nextron-systems.com/en/latest/usage/scan.html#scan for more informations.
+    default: ""
+
+sources:
+    - query: |
+        LET Arch <= SELECT Architecture FROM info()
+        LET Thorzip <= SELECT FullPath FROM Artifact.Generic.Utils.FetchBinary(ToolName="ThorZIP", IsExecutable=FALSE)
+        LET TmpDir <= tempdir(remove_last=TRUE)
+        LET Unzip <= SELECT * FROM unzip(filename=Thorzip.FullPath, output_directory=TmpDir)
+
+        LET Executable <= SELECT F FROM switch(
+          a={
+            SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="\\thor64-lite.exe", else="\\thor-lite.exe") as F FROM info() WHERE OS = "windows"
+          },
+          b={
+            SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="/thor-lite-linux-64", else="/thor-lite-linux") as F FROM info() WHERE OS = "linux"
+          },
+          c={
+            SELECT TmpDir + "/thor-lite-macosx" as F FROM info() WHERE OS = "darwin"
+          }
+        )
+
+        LET Exec <= SELECT * FROM execve(argv=array(a=[(Executable[0]).F, "-e", TmpDir], b=commandline_split(command=CMDLine)))
+        LET Upload <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html)$"
+        SELECT * FROM foreach(row=Exec)

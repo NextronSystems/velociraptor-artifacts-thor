@@ -1,0 +1,64 @@
+name: Generic.Scanner.Thor
+description: |
+   Generic artifact for THOR forensic scanner (https://www.nextron-systems.com/thor/) running on Windows, Linux and Darwin systems.
+   This artifact will create and download valid licenses for each host on the fly using the "PortalKey" parameter, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#retrieve-valid-license-from-customer-portal .
+
+   Reports (.html & .txt) are uploaded to Velociraptor server, THOR stdout output can be found in the flow details "Results" tab.
+
+
+author: Paul Hager - @pH_T__ (Nextron Systems)
+
+type: CLIENT
+
+precondition: SELECT OS FROM info() where OS = 'windows' or OS = "linux" or OS = "darwin"
+
+parameters:
+  - name: PortalKey
+    description: Portal API-Key, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#retrieve-valid-license-from-customer-portal .
+    default: .
+  - name: CMDLine
+    description: Thor command line flags. In most cases leaving empty is fine, see https://thor-manual.nextron-systems.com/en/latest/usage/scan.html#scan for more informations.
+    default: ""
+
+sources:
+    - query: |
+        LET Arch <= SELECT Architecture FROM info()
+        LET URL <= SELECT Path FROM switch(
+          a={
+            SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor10-win.zip' as Path FROM info() WHERE OS = "windows"
+          },
+          b={
+            SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor10-linux.zip' as Path FROM info() WHERE OS = "linux"
+          },
+          c={
+            SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor10-osx.zip' as Path FROM info() WHERE OS = "darwin"
+          }
+        )
+
+        LET ThorZIP <= SELECT Content FROM http_client(
+              url=(URL[0]).Path,
+              method='GET',
+              headers=dict(
+                  `Authorization`=PortalKey
+              ),
+              tempfile_extension=".zip"
+        )
+        LET TmpDir <= tempdir(remove_last=TRUE)
+        LET Unzipped <= SELECT * FROM unzip(filename=ThorZIP.Content, output_directory=TmpDir)
+
+        LET Executable <= SELECT F FROM switch(
+          a={
+            SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="\\thor64.exe", else="\\thor.exe") as F FROM info() WHERE OS = "windows"
+          },
+          b={
+            SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="/thor-linux-64", else="/thor-linux") as F FROM info() WHERE OS = "linux"
+          },
+          c={
+            SELECT TmpDir + "/thor-macosx" as F FROM info() WHERE OS = "darwin"
+          }
+        )
+
+        LET Exec <= SELECT * FROM execve(argv=array(a=[(Executable[0]).F, "--portal-key", PortalKey, "-e", TmpDir], b=commandline_split(command=CMDLine)))
+
+        LET Uploaded <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html)$"
+        SELECT * FROM foreach(row=Exec)
