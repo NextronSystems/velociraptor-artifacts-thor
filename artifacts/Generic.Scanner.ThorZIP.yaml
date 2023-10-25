@@ -43,6 +43,15 @@ sources:
           }
         )
 
-        LET Exec <= SELECT * FROM execve(argv=array(a=[(Executable[0]).F, "-e", TmpDir], b=commandline_split(command=CMDLine)))
+        LET CMDs <= SELECT C FROM switch (
+          a={
+            SELECT commandline_split(command=CMDLine) as C FROM info() WHERE OS = "windows"
+          },
+          b={
+            SELECT commandline_split(command=CMDLine, bash_style=TRUE) as C FROM info() WHERE OS = "linux" OR OS = "darwin"
+          }
+        )
+
+        LET Exec <= SELECT * FROM execve(argv=array(a=[(Executable[0]).F, "-e", TmpDir], b=(CMDs[0]).C))
         LET Upload <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html)$"
         SELECT * FROM foreach(row=Exec)

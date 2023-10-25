@@ -16,6 +16,9 @@ parameters:
   - name: PortalKey
     description: Portal API-Key, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#retrieve-valid-license-from-customer-portal .
     default: .
+  - name: PortalContractID
+    description: Portal contract ID, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#use-thor-s-portal-key-and-portal-contracts-parameters-to-retrieve-a-license .
+    default: .
   - name: CMDLine
     description: Thor command line flags. In most cases leaving empty is fine, see https://thor-manual.nextron-systems.com/en/latest/usage/scan.html#scan for more informations.
     default: ""
@@ -58,7 +61,21 @@ sources:
           }
         )
 
-        LET Exec <= SELECT * FROM execve(argv=array(a=[(Executable[0]).F, "--portal-key", PortalKey, "-e", TmpDir], b=commandline_split(command=CMDLine)))
+        LET CMDs <= SELECT C FROM switch (
+          a={
+            SELECT commandline_split(command=CMDLine) as C FROM info() WHERE OS = "windows"
+          },
+          b={
+            SELECT commandline_split(command=CMDLine, bash_style=TRUE) as C FROM info() WHERE OS = "linux" OR OS = "darwin"
+          }
+        )
+
+        LET Exec <= SELECT * FROM execve(argv=
+          array(
+            a=[(Executable[0]).F, "--portal-key", PortalKey, if(condition= PortalContractID != ".", then=("--portal-contracts"), else=""), if(condition= PortalContractID != ".", then=PortalContractID, else=""), "-e", TmpDir], 
+            b=(CMDs[0]).C
+          )
+        )
 
         LET Uploaded <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html)$"
         SELECT * FROM foreach(row=Exec)
