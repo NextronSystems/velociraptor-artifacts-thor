@@ -1,9 +1,15 @@
 name: Generic.Scanner.Thor
 description: |
    Generic artifact for THOR (enterprise) forensic scanner (https://www.nextron-systems.com/thor/) running on Windows, Linux and Darwin systems.
-   This artifact will create and download valid licenses for each host on the fly using the "PortalKey" parameter, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#retrieve-valid-license-from-customer-portal . 
+   <br/>This artifact creates and downloads valid licenses and binaries for each host on the fly using the "PortalKey" parameter (and if needed the Portal contract ID), see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#retrieve-valid-license-from-customer-portal . 
 
-   Reports (.html & .txt) are uploaded to Velociraptor server, THOR stdout output can be found in the flow details "Results" tab.
+   Caution: 
+   <br/>THOR might exceed the default "Max Execution Time in Seconds", we suggest setting it to 30000 sec (~8.5h).
+   <br/>Since THOR monitors itself and the system regarding resource usage and limits, additional "resource limits" in the Hunt settings are not needed.
+
+   Reports (.html/.txt/.json) are uploaded to Velociraptor server.
+   <br/>The THOR json log and the number of alerts/warnings/notices/errors can be found in the Flow details "Results" tab or in the Hunt "Notebook". 
+   This allows a quick triage.
 
 
 author: Paul Hager - @pH_T__ (Nextron Systems)
@@ -14,17 +20,19 @@ precondition: SELECT OS FROM info() where OS = 'windows' or OS = "linux" or OS =
 
 parameters:
   - name: PortalKey
-    description: Portal API-Key, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#retrieve-valid-license-from-customer-portal .
-    default: .
+    description: Portal API-Key, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#retrieve-valid-license-from-customer-portal . REQUIRED.
+    default: ""
   - name: PortalContractID
     description: Portal contract ID, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#use-thor-s-portal-key-and-portal-contracts-parameters-to-retrieve-a-license .
-    default: .
+    default: ""
   - name: CMDLine
     description: Thor command line flags. In most cases leaving empty is fine, see https://thor-manual.nextron-systems.com/en/latest/usage/scan.html#scan for more informations.
     default: ""
 
 sources:
-    - query: |
+    - name: ThorExec
+      description: Executes THOR with the given parameters and uploads reports.
+      query: |
         LET Arch <= SELECT Architecture FROM info()
         LET URL <= SELECT Path FROM switch(
           a={
@@ -72,10 +80,19 @@ sources:
 
         LET Exec <= SELECT * FROM execve(argv=
           array(
-            a=[(Executable[0]).F, "--portal-key", PortalKey, if(condition= PortalContractID != ".", then=("--portal-contracts"), else=""), if(condition= PortalContractID != ".", then=PortalContractID, else=""), "-e", TmpDir], 
-            b=(CMDs[0]).C
+            a=[(Executable[0]).F, "--json", "--portal-key", PortalKey, if(condition= PortalContractID != "", then=("--portal-contracts"), else=""), if(condition= PortalContractID != "", then=PortalContractID, else=""), "-e", TmpDir], 
+            b=[if(condition= CMDLine = "" OR CMDLine = "." OR CMDLine = " ", then=[], else=(CMDs[0]).C)]
           )
         )
 
-        LET Uploaded <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html)$"
-        SELECT * FROM foreach(row=Exec)
+        LET Uploaded <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html|json)$"
+
+        LET Numbers <= parse_string_with_regex(string=Exec.Stdout, regex='''ALERTS: (?P<Alerts>\d*) WARNINGS: (?P<Warnings>\d*) NOTICES: (?P<Notices>\d*) ERRORS: (?P<Errors>\d*)''')
+        SELECT * FROM Numbers
+
+    - name: ThorResultsJson
+      description: THOR results in JSON.
+      query: |
+        LET JsonFile <= SELECT OSPath, Size FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "json$" LIMIT 1
+        LET FileContent <= read_file(filename=JsonFile[0].OSPath, length=atoi(string=JsonFile[0].Size))
+        SELECT _value as Line FROM foreach(row=split(string=FileContent, sep="\n"))

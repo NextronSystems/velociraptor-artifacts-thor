@@ -1,13 +1,18 @@
 name: Generic.Scanner.ThorZIP
 description: |
    Generic artifact for THOR (LITE) forensic scanner (https://www.nextron-systems.com/thor/) running on Windows, Linux and Darwin systems.
-   
-   Mostly made for THOR LITE, for THOR enterprise see Generic.Scanner.Thor.
+   <br/>Mostly made for THOR LITE, for THOR enterprise see Generic.Scanner.Thor.
    
    This arifact expects a ZIP with THOR (LITE) binaries, licenses and signatures via the "tools" config 'ThorZIP'.
-   ZIP file is downloaded to client host, unzipped and based on OS and architecture the right files are executed.
-   Reports (.html & .txt) are uploaded to Velociraptor server, THOR stdout output can be found in the flow details "Results" tab.
+   <br/>ZIP file is downloaded to client host, unzipped and based on OS and architecture the right file is executed.
 
+   Caution: 
+   <br/>THOR might exceed the default "Max Execution Time in Seconds", we suggest setting it to 30000 sec (~8.5h).
+   <br/>Since THOR monitors itself and the system regarding resource usage and limits, additional "resource limits" in the Hunt settings are not needed.
+
+   Reports (.html/.txt/.json) are uploaded to Velociraptor server.
+   <br/>The THOR json log and the number of alerts/warnings/notices/errors can be found in the Flow details "Results" tab or in the Hunt "Notebook". 
+   This allows a quick triage.
 
 author: Paul Hager - @pH_T__ (Nextron Systems)
 
@@ -25,7 +30,9 @@ parameters:
     default: ""
 
 sources:
-    - query: |
+    - name: ThorExec
+      description: Executes THOR with the given parameters and uploads reports.
+      query: |
         LET Arch <= SELECT Architecture FROM info()
         LET Thorzip <= SELECT FullPath FROM Artifact.Generic.Utils.FetchBinary(ToolName="ThorZIP", IsExecutable=FALSE)
         LET TmpDir <= tempdir(remove_last=TRUE)
@@ -52,6 +59,20 @@ sources:
           }
         )
 
-        LET Exec <= SELECT * FROM execve(argv=array(a=[(Executable[0]).F, "-e", TmpDir], b=(CMDs[0]).C))
-        LET Upload <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html)$"
-        SELECT * FROM foreach(row=Exec)
+        LET Exec <= SELECT * FROM execve(argv=array(
+          a=[(Executable[0]).F, "--json", "-e", TmpDir], 
+          b=[if(condition= CMDLine = "" OR CMDLine = "." OR CMDLine = " ", then=[], else=(CMDs[0]).C)]
+          )
+        )
+
+        LET Uploaded <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html|json)$"
+
+        LET Numbers <= parse_string_with_regex(string=Exec.Stdout, regex='''ALERTS: (?P<Alerts>\d*) WARNINGS: (?P<Warnings>\d*) NOTICES: (?P<Notices>\d*) ERRORS: (?P<Errors>\d*)''')
+        SELECT * FROM Numbers
+
+    - name: ThorResultsJson
+      description: THOR results in JSON.
+      query: |
+        LET JsonFile <= SELECT OSPath, Size FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "json$" LIMIT 1
+        LET FileContent <= read_file(filename=JsonFile[0].OSPath, length=atoi(string=JsonFile[0].Size))
+        SELECT _value as Line FROM foreach(row=split(string=FileContent, sep="\n"))

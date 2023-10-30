@@ -3,6 +3,10 @@ description: |
    Generic artifact for THOR CLOUD forensic scanner (https://www.nextron-systems.com/thor-cloud/) running on Windows, Linux and Darwin systems.
 
    This artifact needs a THOR Cloud launcher token, which can be copied from the 'Launcher' options ('token') from within the campaign view.
+   
+   Caution: 
+   <br/>THOR might exceed the default "Max Execution Time in Seconds", we suggest setting it to 30000 sec (~8.5h).
+   <br/>Since THOR monitors itself and the system regarding resource usage and limits, additional "resource limits" in the Hunt settings are not needed.
 
 author: Paul Hager - @pH_T__ (Nextron Systems)
 
@@ -12,7 +16,7 @@ precondition: SELECT OS FROM info() where OS = 'windows' or OS = "linux" or OS =
 
 parameters:
   - name: Token
-    description: THOR Cloud launcher token
+    description: THOR Cloud launcher token. REQUIRED.
     default: "."
 
 sources:
