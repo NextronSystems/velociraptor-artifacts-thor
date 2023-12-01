@@ -7,6 +7,7 @@ description: |
    Caution: 
    <br/>THOR might exceed the default "Max Execution Time in Seconds", we suggest setting it to 30000 sec (~8.5h).
    <br/>Since THOR monitors itself and the system regarding resource usage and limits, additional "resource limits" in the Hunt settings are not needed.
+   <br/>Also, keep in mind that for this artifacts to work, the clients need to have network access to the THOR Cloud backend ( https://thorcloud-lite.nextron-systems.com ) !
 
 author: Paul Hager - @pH_T__ (Nextron Systems)
 
