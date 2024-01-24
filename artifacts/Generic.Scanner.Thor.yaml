@@ -7,6 +7,9 @@ description: |
    <br/>THOR might exceed the default "Max Execution Time in Seconds", we suggest setting it to 30000 sec (~8.5h).
    <br/>Since THOR monitors itself and the system regarding resource usage and limits, additional "resource limits" in the Hunt settings are not needed.
 
+   Caution:
+   <br/>Be aware that the Portal API key is send to an potentially compromised host! It might be a good idea to change it frequently to avoid getting it stolen!
+
    Reports (.html/.txt/.json) are uploaded to Velociraptor server.
    <br/>The THOR json log and the number of alerts/warnings/notices/errors can be found in the Flow details "Results" tab or in the Hunt "Notebook". 
    This allows a quick triage.
@@ -76,6 +79,11 @@ sources:
           b={
             SELECT commandline_split(command=CMDLine, bash_style=TRUE) as C FROM info() WHERE OS = "linux" OR OS = "darwin"
           }
+        )
+
+        LET Chmod <= SELECT * FROM if(
+          condition={SELECT OS FROM info() WHERE NOT OS =~ "windows" },
+          then={SELECT * FROM execve(argv=["chmod", "+x", Executable[0].F])}
         )
 
         LET Exec <= SELECT * FROM execve(argv=

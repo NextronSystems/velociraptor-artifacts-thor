@@ -59,6 +59,11 @@ sources:
           }
         )
 
+        LET Chmod <= SELECT * FROM if(
+          condition={SELECT OS FROM info() WHERE NOT OS =~ "windows" },
+          then={SELECT * FROM execve(argv=["chmod", "+x", Executable[0].F])}
+        )
+
         LET Exec <= SELECT * FROM execve(argv=array(
           a=[(Executable[0]).F, "--json", "-e", TmpDir], 
           b=[if(condition= CMDLine = "" OR CMDLine = "." OR CMDLine = " ", then=[], else=(CMDs[0]).C)]
