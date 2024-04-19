@@ -42,7 +42,8 @@ sources:
                   `type` = (Type[0]).t,
                   `token` = Token
               ),
-              tempfile_extension=".exe"
+              tempfile_extension=".exe",
+              remove_last=TRUE
         )
         LET Chmod <= SELECT * FROM if(condition={SELECT OS FROM info() WHERE NOT OS =~ "windows" },
                                     then={SELECT * FROM execve(argv=["chmod", "+x", ThorZIP.Content[0]])}
