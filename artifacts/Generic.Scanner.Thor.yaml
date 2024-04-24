@@ -55,7 +55,8 @@ sources:
               headers=dict(
                   `Authorization`=PortalKey
               ),
-              tempfile_extension=".zip"
+              tempfile_extension=".zip",
+              remove_last=TRUE
         )
         LET TmpDir <= tempdir(remove_last=TRUE)
         LET Unzipped <= SELECT * FROM unzip(filename=ThorZIP.Content, output_directory=TmpDir)
