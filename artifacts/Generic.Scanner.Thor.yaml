@@ -36,6 +36,9 @@ sources:
     - name: ThorExec
       description: Executes THOR with the given parameters and uploads reports.
       query: |
+
+        LET _ <= SELECT sleep(time=rand(range=120)) FROM scope()
+
         LET Arch <= SELECT Architecture FROM info()
         LET URL <= SELECT Path FROM switch(
           a={
