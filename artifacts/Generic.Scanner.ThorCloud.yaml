@@ -1,13 +1,18 @@
 name: Generic.Scanner.ThorCloud
 description: |
-   Generic artifact for THOR CLOUD forensic scanner (https://www.nextron-systems.com/thor-cloud/) running on Windows, Linux and Darwin systems.
+  Generic artifact for THOR Cloud forensic scanner (https://www.nextron-systems.com/thor-cloud/) running on Windows, Linux and Darwin systems.
+  This artifact supports both THOR Cloud (paid) and THOR Cloud Lite (free) services.
 
-   This artifact needs a THOR Cloud launcher token, which can be copied from the 'Launcher' options ('token') from within the campaign view.
-   
-   Caution: 
-   <br/>THOR might exceed the default "Max Execution Time in Seconds", we suggest setting it to 30000 sec (~8.5h).
-   <br/>Since THOR monitors itself and the system regarding resource usage and limits, additional "resource limits" in the Hunt settings are not needed.
-   <br/>Also, keep in mind that for this artifacts to work, the clients need to have network access to the THOR Cloud backend ( https://thorcloud-lite.nextron-systems.com ) !
+  This artifact needs a THOR Cloud launcher token, which can be copied from the 'Launcher' options ('token') from within the campaign view.
+
+  **Network Requirements (for firewall configuration):**
+  <br/>• THOR Cloud (full service): https://thor-cloud.nextron-services.com/dl
+  <br/>• THOR Cloud Lite (free service): https://thorcloud-lite.nextron-systems.com/dl
+
+  Caution: 
+  <br/>THOR might exceed the default "Max Execution Time in Seconds", we suggest setting it to 30000 sec (~8.5h).
+  <br/>Since THOR monitors itself and the system regarding resource usage and limits, additional "resource limits" in the Hunt settings are not needed.
+  <br/>Also, keep in mind that for this artifacts to work, the clients need to have network access to the THOR Cloud backend!
 
 author: Paul Hager - @pH_T__ (Nextron Systems)
 
@@ -18,35 +23,51 @@ precondition: SELECT OS FROM info() where OS = 'windows' or OS = "linux" or OS =
 parameters:
   - name: Token
     description: THOR Cloud launcher token. REQUIRED.
-    default: "."
+    default: ""
+  - name: CloudService
+    description: Select THOR Cloud service type. 'full' for paid THOR Cloud service, 'lite' for free THOR Cloud Lite service.
+    type: choices
+    choices:
+      - full
+      - lite
+    default: lite
 
 sources:
-    - query: |
-        LET Type <= SELECT t FROM switch (
-            a={
-                SELECT 'windows-binary' as t FROM info() WHERE OS = "windows"
-            },
-            b={
-                SELECT 'linux-script' as t FROM info() WHERE OS = "linux"
-            },
-            c={
-                SELECT 'mac-script' as t FROM info() WHERE OS = "darwin"
-            }
-        )
+  - query: |
+      LET Type <= SELECT t FROM switch (
+          a={
+              SELECT 'windows-binary' as t FROM info() WHERE OS = "windows"
+          },
+          b={
+              SELECT 'linux-script' as t FROM info() WHERE OS = "linux"
+          },
+          c={
+              SELECT 'mac-script' as t FROM info() WHERE OS = "darwin"
+          }
+      )
 
-        LET ThorZIP <= SELECT Content FROM http_client(
-              url='https://thorcloud-lite.nextron-systems.com/dl',
-              method='GET',
-              params=dict(
-                  `origin` = "oneliner",
-                  `type` = (Type[0]).t,
-                  `token` = Token
-              ),
-              tempfile_extension=".exe",
-              remove_last=TRUE
-        )
-        LET Chmod <= SELECT * FROM if(condition={SELECT OS FROM info() WHERE NOT OS =~ "windows" },
-                                    then={SELECT * FROM execve(argv=["chmod", "+x", ThorZIP.Content[0]])}
-                                )
-        LET Exec <= SELECT * FROM execve(argv=[ThorZIP.Content])
-        SELECT * FROM foreach(row=Exec)
+      LET ServiceURL <= SELECT url FROM switch (
+          a={
+              SELECT 'https://thor-cloud.nextron-services.com/dl' as url FROM scope() WHERE CloudService = "full"
+          },
+          b={
+              SELECT 'https://thorcloud-lite.nextron-systems.com/dl' as url FROM scope() WHERE CloudService = "lite"
+          }
+      )
+
+      LET ThorZIP <= SELECT Content FROM http_client(
+            url=(ServiceURL[0]).url,
+            method='GET',
+            params=dict(
+                `origin` = "oneliner",
+                `type` = (Type[0]).t,
+                `token` = Token
+            ),
+            tempfile_extension=".exe",
+            remove_last=TRUE
+      )
+      LET Chmod <= SELECT * FROM if(condition={SELECT OS FROM info() WHERE NOT OS =~ "windows" },
+                                  then={SELECT * FROM execve(argv=["chmod", "+x", ThorZIP.Content[0]])}
+                              )
+      LET Exec <= SELECT * FROM execve(argv=[ThorZIP.Content])
+      SELECT * FROM foreach(row=Exec)
