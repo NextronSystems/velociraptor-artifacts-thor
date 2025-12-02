@@ -1,19 +1,18 @@
 name: Generic.Scanner.Thor
 description: |
-   Generic artifact for THOR (enterprise) forensic scanner (https://www.nextron-systems.com/thor/) running on Windows, Linux and Darwin systems.
-   <br/>This artifact creates and downloads valid licenses and binaries for each host on the fly using the "PortalKey" parameter (and if needed the Portal contract ID), see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#retrieve-valid-license-from-customer-portal . 
+  Generic artifact for THOR enterprise (paid) forensic scanner (https://www.nextron-systems.com/thor/) running on Windows, Linux and Darwin systems.
+  <br/>This artifact creates and downloads valid licenses and binaries for each host on the fly using the "PortalKey" parameter (and if needed the Portal contract ID), see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#retrieve-valid-license-from-customer-portal . 
 
-   Caution: 
-   <br/>THOR might exceed the default "Max Execution Time in Seconds", we suggest setting it to 30000 sec (~8.5h).
-   <br/>Since THOR monitors itself and the system regarding resource usage and limits, additional "resource limits" in the Hunt settings are not needed.
+  Caution: 
+  <br/>THOR might exceed the default "Max Execution Time in Seconds", we suggest setting it to 30000 sec (~8.5h).
+  <br/>Since THOR monitors itself and the system regarding resource usage and limits, additional "resource limits" in the Hunt settings are not needed.
 
-   Caution:
-   <br/>Be aware that the Portal API key is send to an potentially compromised host! It might be a good idea to change it frequently to avoid getting it stolen!
+  Caution:
+  <br/>Be aware that the Portal API key is send to an potentially compromised host! It might be a good idea to change it frequently to avoid getting it stolen!
 
-   Reports (.html/.txt/.json) are uploaded to Velociraptor server.
-   <br/>The THOR json log and the number of alerts/warnings/notices/errors can be found in the Flow details "Results" tab or in the Hunt "Notebook". 
-   This allows a quick triage.
-
+  Reports (.html/.txt/.json) are uploaded to Velociraptor server.
+  <br/>The THOR json log and the number of alerts/warnings/notices/errors can be found in the Flow details "Results" tab or in the Hunt "Notebook". 
+  This allows a quick triage.
 
 author: Paul Hager - @pH_T__ (Nextron Systems)
 
@@ -21,90 +20,95 @@ type: CLIENT
 
 precondition: SELECT OS FROM info() where OS = 'windows' or OS = "linux" or OS = "darwin"
 
+required_permissions:
+  - EXECVE
+  - FILESYSTEM_WRITE
+  - NETWORK
+
 parameters:
   - name: PortalKey
     description: Portal API-Key, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#retrieve-valid-license-from-customer-portal . REQUIRED.
     default: ""
   - name: PortalContractID
-    description: Portal contract ID, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#use-thor-s-portal-key-and-portal-contracts-parameters-to-retrieve-a-license .
+    description: Portal contract ID, see https://thor-manual.nextron-systems.com/en/latest/usage/deployment.html#use-thor-s-portal-key-and-portal-contracts-parameters-to-retrieve-a-license . OPTIONAL.
     default: ""
   - name: CMDLine
     description: Thor command line flags. In most cases leaving empty is fine, see https://thor-manual.nextron-systems.com/en/latest/usage/scan.html#scan for more informations.
     default: ""
 
 sources:
-    - name: ThorExec
-      description: Executes THOR with the given parameters and uploads reports.
-      query: |
+  - name: ThorExec
+    description: Executes THOR with the given parameters and uploads reports.
+    query: |
 
-        LET _ <= SELECT sleep(time=rand(range=120)) FROM scope()
+      LET _ <= SELECT sleep(time=rand(range=120)) FROM scope()
 
-        LET Arch <= SELECT Architecture FROM info()
-        LET URL <= SELECT Path FROM switch(
-          a={
-            SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor10-win.zip' as Path FROM info() WHERE OS = "windows"
-          },
-          b={
-            SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor10-linux.zip' as Path FROM info() WHERE OS = "linux"
-          },
-          c={
-            SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor10-osx.zip' as Path FROM info() WHERE OS = "darwin"
-          }
+      LET Arch <= SELECT Architecture FROM info()
+      LET URL <= SELECT Path FROM switch(
+        a={
+          SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor10-win.zip' as Path FROM info() WHERE OS = "windows"
+        },
+        b={
+          SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor10-linux.zip' as Path FROM info() WHERE OS = "linux"
+        },
+        c={
+          SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor10-osx.zip' as Path FROM info() WHERE OS = "darwin"
+        }
+      )
+
+      LET ThorZIP <= SELECT Content FROM http_client(
+            url=(URL[0]).Path,
+            method='GET',
+            headers=dict(
+                `Authorization`=PortalKey
+            ),
+            tempfile_extension=".zip",
+            remove_last=TRUE
+      )
+      LET TmpDir <= tempdir(remove_last=TRUE)
+      LET Unzipped <= SELECT * FROM unzip(filename=ThorZIP.Content, output_directory=TmpDir)
+
+      LET Executable <= SELECT F FROM switch(
+        a={
+          SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="\\thor64.exe", else="\\thor.exe") as F FROM info() WHERE OS = "windows"
+        },
+        b={
+          SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="/thor-linux-64", else="/thor-linux") as F FROM info() WHERE OS = "linux"
+        },
+        c={
+          SELECT TmpDir + "/thor-macosx" as F FROM info() WHERE OS = "darwin"
+        }
+      )
+
+      LET CMDs <= SELECT C FROM switch (
+        a={
+          SELECT commandline_split(command=CMDLine) as C FROM info() WHERE OS = "windows"
+        },
+        b={
+          SELECT commandline_split(command=CMDLine, bash_style=TRUE) as C FROM info() WHERE OS = "linux" OR OS = "darwin"
+        }
+      )
+
+      LET Chmod <= SELECT * FROM if(
+        condition={SELECT OS FROM info() WHERE NOT OS =~ "windows" },
+        then={SELECT * FROM execve(argv=["chmod", "+x", Executable[0].F])}
+      )
+
+      LET Exec <= SELECT * FROM execve(argv=
+        array(
+          a=[(Executable[0]).F, "--json", "--portal-key", PortalKey, if(condition= PortalContractID != "", then=("--portal-contracts"), else=""), if(condition= PortalContractID != "", then=PortalContractID, else=""), "-e", TmpDir], 
+          b=[if(condition= CMDLine = "" OR CMDLine = "." OR CMDLine = " ", then=[], else=(CMDs[0]).C)]
         )
+      )
 
-        LET ThorZIP <= SELECT Content FROM http_client(
-              url=(URL[0]).Path,
-              method='GET',
-              headers=dict(
-                  `Authorization`=PortalKey
-              ),
-              tempfile_extension=".zip",
-              remove_last=TRUE
-        )
-        LET TmpDir <= tempdir(remove_last=TRUE)
-        LET Unzipped <= SELECT * FROM unzip(filename=ThorZIP.Content, output_directory=TmpDir)
+      LET Uploaded <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html|json)$"
 
-        LET Executable <= SELECT F FROM switch(
-          a={
-            SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="\\thor64.exe", else="\\thor.exe") as F FROM info() WHERE OS = "windows"
-          },
-          b={
-            SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="/thor-linux-64", else="/thor-linux") as F FROM info() WHERE OS = "linux"
-          },
-          c={
-            SELECT TmpDir + "/thor-macosx" as F FROM info() WHERE OS = "darwin"
-          }
-        )
+      LET Numbers <= parse_string_with_regex(string=Exec.Stdout, regex='''ALERTS: (?P<Alerts>\d*) WARNINGS: (?P<Warnings>\d*) NOTICES: (?P<Notices>\d*) ERRORS: (?P<Errors>\d*)''')
+      SELECT * FROM Numbers
 
-        LET CMDs <= SELECT C FROM switch (
-          a={
-            SELECT commandline_split(command=CMDLine) as C FROM info() WHERE OS = "windows"
-          },
-          b={
-            SELECT commandline_split(command=CMDLine, bash_style=TRUE) as C FROM info() WHERE OS = "linux" OR OS = "darwin"
-          }
-        )
-
-        LET Chmod <= SELECT * FROM if(
-          condition={SELECT OS FROM info() WHERE NOT OS =~ "windows" },
-          then={SELECT * FROM execve(argv=["chmod", "+x", Executable[0].F])}
-        )
-
-        LET Exec <= SELECT * FROM execve(argv=
-          array(
-            a=[(Executable[0]).F, "--json", "--portal-key", PortalKey, if(condition= PortalContractID != "", then=("--portal-contracts"), else=""), if(condition= PortalContractID != "", then=PortalContractID, else=""), "-e", TmpDir], 
-            b=[if(condition= CMDLine = "" OR CMDLine = "." OR CMDLine = " ", then=[], else=(CMDs[0]).C)]
-          )
-        )
-
-        LET Uploaded <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html|json)$"
-
-        LET Numbers <= parse_string_with_regex(string=Exec.Stdout, regex='''ALERTS: (?P<Alerts>\d*) WARNINGS: (?P<Warnings>\d*) NOTICES: (?P<Notices>\d*) ERRORS: (?P<Errors>\d*)''')
-        SELECT * FROM Numbers
-
-    - name: ThorResultsJson
-      description: THOR results in JSON.
-      query: |
-        LET JsonFile <= SELECT OSPath, Size FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "json$" LIMIT 1
-        LET FileContent <= read_file(filename=JsonFile[0].OSPath, length=atoi(string=JsonFile[0].Size))
-        SELECT _value as Line FROM foreach(row=split(string=FileContent, sep="\n"))
+  - name: ThorResultsJson
+    description: THOR results in JSON.
+    query: |
+      LET JsonFile <= SELECT OSPath, Size FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "json$" LIMIT 1
+      LET FileContent <= read_file(filename=JsonFile[0].OSPath, length=atoi(string=JsonFile[0].Size))
+      SELECT _value as Line FROM foreach(row=split(string=FileContent, sep="\n"))

@@ -1,24 +1,28 @@
 name: Generic.Scanner.ThorZIP
 description: |
-   Generic artifact for THOR (LITE) forensic scanner (https://www.nextron-systems.com/thor/) running on Windows, Linux and Darwin systems.
-   <br/>Mostly made for THOR LITE, for THOR enterprise see Generic.Scanner.Thor.
-   
-   This arifact expects a ZIP with THOR (LITE) binaries, licenses and signatures via the "tools" config 'ThorZIP'.
-   <br/>ZIP file is downloaded to client host, unzipped and based on OS and architecture the right file is executed.
+  Generic artifact for THOR Lite (free) forensic scanner (https://www.nextron-systems.com/thor/) running on Windows, Linux and Darwin systems.
+  <br/>Mostly made for THOR Lite, for THOR enterprise see Generic.Scanner.Thor.
 
-   Caution: 
-   <br/>THOR might exceed the default "Max Execution Time in Seconds", we suggest setting it to 30000 sec (~8.5h).
-   <br/>Since THOR monitors itself and the system regarding resource usage and limits, additional "resource limits" in the Hunt settings are not needed.
+  This arifact expects a ZIP with THOR (Lite) binaries, licenses and signatures via the "tools" config 'ThorZIP'.
+  <br/>ZIP file is downloaded to client host, unzipped and based on OS and architecture the right file is executed.
 
-   Reports (.html/.txt/.json) are uploaded to Velociraptor server.
-   <br/>The THOR json log and the number of alerts/warnings/notices/errors can be found in the Flow details "Results" tab or in the Hunt "Notebook". 
-   This allows a quick triage.
+  Caution: 
+  <br/>THOR might exceed the default "Max Execution Time in Seconds", we suggest setting it to 30000 sec (~8.5h).
+  <br/>Since THOR monitors itself and the system regarding resource usage and limits, additional "resource limits" in the Hunt settings are not needed.
+
+  Reports (.html/.txt/.json) are uploaded to Velociraptor server.
+  <br/>The THOR json log and the number of alerts/warnings/notices/errors can be found in the Flow details "Results" tab or in the Hunt "Notebook". 
+  This allows a quick triage.
 
 author: Paul Hager - @pH_T__ (Nextron Systems)
 
 type: CLIENT
 
 precondition: SELECT OS FROM info() where OS = 'windows' or OS = "linux" or OS = "darwin"
+
+required_permissions:
+  - EXECVE
+  - FILESYSTEM_WRITE
 
 tools:
   - name: ThorZIP
@@ -30,54 +34,54 @@ parameters:
     default: ""
 
 sources:
-    - name: ThorExec
-      description: Executes THOR with the given parameters and uploads reports.
-      query: |
-        LET Arch <= SELECT Architecture FROM info()
-        LET Thorzip <= SELECT FullPath FROM Artifact.Generic.Utils.FetchBinary(ToolName="ThorZIP", IsExecutable=FALSE)
-        LET TmpDir <= tempdir(remove_last=TRUE)
-        LET Unzip <= SELECT * FROM unzip(filename=Thorzip.FullPath, output_directory=TmpDir)
+  - name: ThorExec
+    description: Executes THOR with the given parameters and uploads reports.
+    query: |
+      LET Arch <= SELECT Architecture FROM info()
+      LET Thorzip <= SELECT FullPath FROM Artifact.Generic.Utils.FetchBinary(ToolName="ThorZIP", IsExecutable=FALSE)
+      LET TmpDir <= tempdir(remove_last=TRUE)
+      LET Unzip <= SELECT * FROM unzip(filename=Thorzip.FullPath, output_directory=TmpDir)
 
-        LET Executable <= SELECT F FROM switch(
-          a={
-            SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="\\thor64-lite.exe", else="\\thor-lite.exe") as F FROM info() WHERE OS = "windows"
-          },
-          b={
-            SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="/thor-lite-linux-64", else="/thor-lite-linux") as F FROM info() WHERE OS = "linux"
-          },
-          c={
-            SELECT TmpDir + "/thor-lite-macosx" as F FROM info() WHERE OS = "darwin"
-          }
+      LET Executable <= SELECT F FROM switch(
+        a={
+          SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="\\thor64-lite.exe", else="\\thor-lite.exe") as F FROM info() WHERE OS = "windows"
+        },
+        b={
+          SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="/thor-lite-linux-64", else="/thor-lite-linux") as F FROM info() WHERE OS = "linux"
+        },
+        c={
+          SELECT TmpDir + "/thor-lite-macosx" as F FROM info() WHERE OS = "darwin"
+        }
+      )
+
+      LET CMDs <= SELECT C FROM switch (
+        a={
+          SELECT commandline_split(command=CMDLine) as C FROM info() WHERE OS = "windows"
+        },
+        b={
+          SELECT commandline_split(command=CMDLine, bash_style=TRUE) as C FROM info() WHERE OS = "linux" OR OS = "darwin"
+        }
+      )
+
+      LET Chmod <= SELECT * FROM if(
+        condition={SELECT OS FROM info() WHERE NOT OS =~ "windows" },
+        then={SELECT * FROM execve(argv=["chmod", "+x", Executable[0].F])}
+      )
+
+      LET Exec <= SELECT * FROM execve(argv=array(
+        a=[(Executable[0]).F, "--json", "-e", TmpDir], 
+        b=[if(condition= CMDLine = "" OR CMDLine = "." OR CMDLine = " ", then=[], else=(CMDs[0]).C)]
         )
+      )
 
-        LET CMDs <= SELECT C FROM switch (
-          a={
-            SELECT commandline_split(command=CMDLine) as C FROM info() WHERE OS = "windows"
-          },
-          b={
-            SELECT commandline_split(command=CMDLine, bash_style=TRUE) as C FROM info() WHERE OS = "linux" OR OS = "darwin"
-          }
-        )
+      LET Uploaded <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html|json)$"
 
-        LET Chmod <= SELECT * FROM if(
-          condition={SELECT OS FROM info() WHERE NOT OS =~ "windows" },
-          then={SELECT * FROM execve(argv=["chmod", "+x", Executable[0].F])}
-        )
+      LET Numbers <= parse_string_with_regex(string=Exec.Stdout, regex='''ALERTS: (?P<Alerts>\d*) WARNINGS: (?P<Warnings>\d*) NOTICES: (?P<Notices>\d*) ERRORS: (?P<Errors>\d*)''')
+      SELECT * FROM Numbers
 
-        LET Exec <= SELECT * FROM execve(argv=array(
-          a=[(Executable[0]).F, "--json", "-e", TmpDir], 
-          b=[if(condition= CMDLine = "" OR CMDLine = "." OR CMDLine = " ", then=[], else=(CMDs[0]).C)]
-          )
-        )
-
-        LET Uploaded <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html|json)$"
-
-        LET Numbers <= parse_string_with_regex(string=Exec.Stdout, regex='''ALERTS: (?P<Alerts>\d*) WARNINGS: (?P<Warnings>\d*) NOTICES: (?P<Notices>\d*) ERRORS: (?P<Errors>\d*)''')
-        SELECT * FROM Numbers
-
-    - name: ThorResultsJson
-      description: THOR results in JSON.
-      query: |
-        LET JsonFile <= SELECT OSPath, Size FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "json$" LIMIT 1
-        LET FileContent <= read_file(filename=JsonFile[0].OSPath, length=atoi(string=JsonFile[0].Size))
-        SELECT _value as Line FROM foreach(row=split(string=FileContent, sep="\n"))
+  - name: ThorResultsJson
+    description: THOR results in JSON.
+    query: |
+      LET JsonFile <= SELECT OSPath, Size FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "json$" LIMIT 1
+      LET FileContent <= read_file(filename=JsonFile[0].OSPath, length=atoi(string=JsonFile[0].Size))
+      SELECT _value as Line FROM foreach(row=split(string=FileContent, sep="\n"))

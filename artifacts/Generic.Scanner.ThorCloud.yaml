@@ -20,6 +20,10 @@ type: CLIENT
 
 precondition: SELECT OS FROM info() where OS = 'windows' or OS = "linux" or OS = "darwin"
 
+required_permissions:
+  - EXECVE
+  - NETWORK
+
 parameters:
   - name: Token
     description: THOR Cloud launcher token. REQUIRED.
