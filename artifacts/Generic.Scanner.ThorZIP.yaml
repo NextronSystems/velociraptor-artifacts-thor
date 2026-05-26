@@ -1,5 +1,6 @@
 name: Generic.Scanner.ThorZIP
 description: |
+  Original artifact - https://github.com/NextronSystems/velociraptor-artifacts-thor)
   Generic artifact for THOR Lite (free) forensic scanner (https://www.nextron-systems.com/thor/) running on Windows, Linux and Darwin systems.
   <br/>Mostly made for THOR Lite, for THOR enterprise see Generic.Scanner.Thor.
 
@@ -29,59 +30,140 @@ tools:
     url: todo.thor-lite.zip.download.url
 
 parameters:
-  - name: CMDLine
-    description: Thor command line flags. In most cases leaving empty is fine, see https://thor-manual.nextron-systems.com/en/latest/usage/scan.html#scan for more informations.
+  - name: Quick
+    description: Activate a number of flags to speed up the scan at cost of some detection. This is equivalent  --noeventlog --nofirewall --noprofiles --nologscan --noevtx --nohotfixes --nomft --lookback 3 --lookback-modules filescan
+    type: bool
+    default: N
+  - name: Silent
+    description: Do not print anything to command line. This will reduce Velociraptor logs for clients
+    type: bool
+    default: N   
+  - name: Soft
+    description: Skip CPU and RAM intensive modules (Mutexes, Firewall, Logons, Network sessions and shares, LSA sessions, open files, hosts file), don't decompress executables and doesn't perform a DoublePulsar backdoor check, lower max CPU usage to 70% and set low priority for THOR. This mode activates automatically on systems with 1 CPU core or less than 1024 MB RAM.
+    type: bool
+    default: N
+  - name: CustomOnly
+    description: Set to only use custom signatures (disables all internal THOR signatures and detections) 
+    type: bool
+    default: N
+  - name: NoProcessScanning
+    description: Set if you wish to disable the scanning of in memory processes 
+    type: bool
+    default: N
+  - name: Intense
+    description: Paranoid scan mode that disables all safe guards. Only use this mode in lab scanning scenarios. We don't recommend using this mode to live scan productive systems. This enables memory intensive extra modules
+    type: bool
+    default: N
+  - name: AllHardDrives
+    description: Scan all local hard drives. Default is system drive (Windows Only)
+    type: bool
+    default: N
+  - name: ProcessIntegrity
+    description: Run PE-Sieve to check for process integrity (Windows only)
+    type: bool
+    default: N
+  - name: ScanPath
+    description: Restrict scans to certain system paths
+    type: string
     default: ""
+  - name: CPULimit
+    description: Pause any THOR actions while the overall CPU usage exceeds this value (in percent). Minimum is 15% (default 95)
+    type: int
+    default: 95
+
 
 sources:
   - name: ThorExec
     description: Executes THOR with the given parameters and uploads reports.
     query: |
-      LET Arch <= SELECT Architecture FROM info()
-      LET Thorzip <= SELECT FullPath FROM Artifact.Generic.Utils.FetchBinary(ToolName="ThorZIP", IsExecutable=FALSE)
+      LET Arch <= SELECT Architecture
+        FROM info()
+      
+      LET Thorzip <= SELECT FullPath
+        FROM Artifact.Generic.Utils.FetchBinary(ToolName="ThorZIP",
+                                                IsExecutable=FALSE)
+      
       LET TmpDir <= tempdir(remove_last=TRUE)
-      LET Unzip <= SELECT * FROM unzip(filename=Thorzip.FullPath, output_directory=TmpDir)
-
-      LET Executable <= SELECT F FROM switch(
-        a={
-          SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="\\thor64-lite.exe", else="\\thor-lite.exe") as F FROM info() WHERE OS = "windows"
+      
+      LET Unzip <= SELECT *
+        FROM unzip(filename=Thorzip.FullPath, output_directory=TmpDir)
+      
+      LET Executable <= SELECT F
+        FROM switch(a={
+          SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64",
+                             then="\\thor64-lite.exe",
+                             else="\\thor-lite.exe") AS F
+          FROM info()
+          WHERE OS = "windows"
         },
-        b={
-          SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64", then="/thor-lite-linux-64", else="/thor-lite-linux") as F FROM info() WHERE OS = "linux"
+                    b={
+          SELECT TmpDir + if(condition=Arch["Architecture"] =~ "amd64",
+                             then="/thor-lite-linux-64",
+                             else="/thor-lite-linux") AS F
+          FROM info()
+          WHERE OS = "linux"
         },
-        c={
-          SELECT TmpDir + "/thor-lite-macosx" as F FROM info() WHERE OS = "darwin"
-        }
-      )
-
-      LET CMDs <= SELECT C FROM switch (
-        a={
-          SELECT commandline_split(command=CMDLine) as C FROM info() WHERE OS = "windows"
+                    c={
+          SELECT TmpDir + "/thor-lite-macosx" AS F
+          FROM info()
+          WHERE OS = "darwin"
+        })
+      
+      LET Chmod <= SELECT *
+        FROM if(condition={
+          SELECT OS
+          FROM info()
+          WHERE NOT OS =~ "windows"
         },
-        b={
-          SELECT commandline_split(command=CMDLine, bash_style=TRUE) as C FROM info() WHERE OS = "linux" OR OS = "darwin"
-        }
-      )
+                then={
+          SELECT *
+          FROM execve(argv=["chmod", "+x", Executable[0].F])
+        })
+        
 
-      LET Chmod <= SELECT * FROM if(
-        condition={SELECT OS FROM info() WHERE NOT OS =~ "windows" },
-        then={SELECT * FROM execve(argv=["chmod", "+x", Executable[0].F])}
-      )
+        
+      
+      LET path_args <= if(condition=ScanPath!="", then=["--path", ScanPath], else=[])
+      
+      LET cmdline <= filter(
+          list=(Executable[0].F, "--json", "-e", TmpDir, "--cpulimit",
+              str(str=CPULimit), 
+              if(condition=Quick, then="--quick"),
+              if(condition=Silent, then="--silent"),
+              if(condition=Soft, then="--soft"), 
+              if(condition=NoProcessScanning, then="--noprocs"), 
+              if(condition=CustomOnly, then="--customonly"),
+              if(condition=Intense, then="--intense"), 
+              if(condition=AllHardDrives, then="--allhds"), 
+              if(condition=ProcessIntegrity, then="--processintegrity")
+              ) + path_args, regex=".+")
+      
+      LET Exec <= SELECT *
+        FROM execve(argv=cmdline, cwd=TmpDir, sep="\n", length=9999999)
+        WHERE log(message=Stdout)
+      
+      LET Uploaded <= SELECT Name,
+                             upload(file=OSPath) AS FileDetails
+        FROM glob(globs="/*", root=TmpDir)
+        WHERE Name =~ "(csv|txt|html|json)$"
+      
+      LET Numbers <= parse_string_with_regex(
+          string=Exec.Stdout,
+          regex='''ALERTS: (?P<Alerts>\d*) WARNINGS: (?P<Warnings>\d*) NOTICES: (?P<Notices>\d*) ERRORS: (?P<Errors>\d*)''')
+      
+      SELECT *
+      FROM Numbers
 
-      LET Exec <= SELECT * FROM execve(argv=array(
-        a=[(Executable[0]).F, "--json", "-e", TmpDir], 
-        b=[if(condition= CMDLine = "" OR CMDLine = "." OR CMDLine = " ", then=[], else=(CMDs[0]).C)]
-        )
-      )
-
-      LET Uploaded <= SELECT Name, upload(file=OSPath) as FileDetails FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "(csv|txt|html|json)$"
-
-      LET Numbers <= parse_string_with_regex(string=Exec.Stdout, regex='''ALERTS: (?P<Alerts>\d*) WARNINGS: (?P<Warnings>\d*) NOTICES: (?P<Notices>\d*) ERRORS: (?P<Errors>\d*)''')
-      SELECT * FROM Numbers
-
-  - name: ThorResultsJson
-    description: THOR results in JSON.
+  - name: ThorParsedResults
+    description: JSON parsed results
     query: |
-      LET JsonFile <= SELECT OSPath, Size FROM glob(globs="/*", root=TmpDir) WHERE Name =~ "json$" LIMIT 1
-      LET FileContent <= read_file(filename=JsonFile[0].OSPath, length=atoi(string=JsonFile[0].Size))
-      SELECT _value as Line FROM foreach(row=split(string=FileContent, sep="\n"))
+      LET JsonFile <= SELECT OSPath
+        FROM glob(globs="/*", root=TmpDir)
+        WHERE Name =~ "json$"
+        LIMIT 1
+      
+      LET JsonResult = SELECT *
+        FROM parse_jsonl(filename=JsonFile[0].OSPath)
+      
+      SELECT *
+      FROM JsonResult
