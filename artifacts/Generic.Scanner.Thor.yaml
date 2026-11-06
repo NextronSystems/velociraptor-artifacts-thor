@@ -46,13 +46,13 @@ sources:
       LET Arch <= SELECT Architecture FROM info()
       LET URL <= SELECT Path FROM switch(
         a={
-          SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor10-win.zip' as Path FROM info() WHERE OS = "windows"
+          SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor-windows.zip' as Path FROM info() WHERE OS = "windows"
         },
         b={
-          SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor10-linux.zip' as Path FROM info() WHERE OS = "linux"
+          SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor-linux.zip' as Path FROM info() WHERE OS = "linux"
         },
         c={
-          SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor10-osx.zip' as Path FROM info() WHERE OS = "darwin"
+          SELECT 'https://portal.nextron-systems.com/api/v1/downloads/thor-macos.zip' as Path FROM info() WHERE OS = "darwin"
         }
       )
 
